@@ -17,14 +17,49 @@ These images install **binaries and runtimes only** — `php.ini`, OPcache tunin
 
 ## Tag matrix
 
-| Tag | PHP | gRPC | Notes |
+| Tag | PHP | gRPC | Upstream support |
 |---|---|---|---|
-| `:7.4` / `:7.4-grpc` | 7.4 | no / yes | |
-| `:8.1` / `:8.1-grpc` | 8.1 | no / yes | |
-| `:8.2` / `:8.2-grpc` | 8.2 | no / yes | |
-| `:latest` | 8.2 | no | alias for `:8.2` |
+| `:7.4` / `:7.4-grpc` | 7.4 | no / yes | EOL — see [Security](#security) |
+| `:8.0` / `:8.0-grpc` | 8.0 | no / yes | EOL — see [Security](#security) |
+| `:8.1` / `:8.1-grpc` | 8.1 | no / yes | EOL — see [Security](#security) |
+| `:8.2` / `:8.2-grpc` | 8.2 | no / yes | security fixes only |
+| `:8.3` / `:8.3-grpc` | 8.3 | no / yes | active |
+| `:8.4` / `:8.4-grpc` | 8.4 | no / yes | active |
+| `:8.5` / `:8.5-grpc` | 8.5 | no / yes | active |
+| `:latest` | 8.4 | no | alias for `:8.4` |
 
 All tags come with Node 24 pre-installed. To use a different Node version inside your project image, see [Switching Node versions](#switching-node-versions) below.
+
+## Security
+
+Each Dockerfile tracks a floating `php:<minor>-fpm` base tag rather than pinning
+a patch release, so **every rebuild picks up the newest upstream patch for that
+branch automatically**. Bake sets `pull = true` to guarantee the floating tag is
+re-resolved instead of being served from a stale local cache. Keeping these
+images current is therefore a matter of rebuilding and pushing — no Dockerfile
+edit is needed when upstream ships a fix.
+
+### CVE-2026-109618 / CVE-2026-109619 ("php2shell")
+
+A pre-auth RCE in `session.upload_progress`, reachable on any multipart POST
+endpoint under default configuration. Upstream patched it on 2026-10-21 in PHP
+8.2.35, 8.3.36, 8.4.27 and 8.5.12.
+
+- **`:8.2` – `:8.5`** — carry the patched runtime as soon as they are rebuilt.
+- **`:7.4`, `:8.0`, `:8.1`** — these branches are EOL and will never receive the
+  fix. They instead ship
+  [`laravel-php/conf.d/zzz-php2shell-mitigation.ini`](./laravel-php/conf.d/zzz-php2shell-mitigation.ini),
+  which sets `session.upload_progress.enabled = Off`. The `zzz-` prefix makes it
+  load after a project's own `conf.d` drop-ins so the feature cannot be
+  re-enabled by accident. This is a mitigation, not a patch — **migrate off EOL
+  PHP.**
+
+Verify an image before deploying it:
+
+```shell
+docker run --rm puncoz/laravel-php:8.4 php -v
+docker run --rm puncoz/laravel-php:8.1 php -i | grep session.upload_progress.enabled
+```
 
 ## Setup
 
@@ -41,10 +76,10 @@ All builds are driven by `docker-bake.hcl` at the repo root. A `Makefile` wraps 
 
 ```shell
 make builder         # one-time: create the multi-platform buildx builder
-make build           # build all 8 images locally for host arch
-make push            # build + push all 8 images, multi-arch
-make 8.2             # build 8.2 + 8.2-grpc locally
-make push-8.2        # build + push 8.2 + 8.2-grpc, multi-arch
+make build           # build all 14 images locally for host arch
+make push            # build + push all 14 images, multi-arch
+make 8.4             # build 8.4 + 8.4-grpc locally
+make push-8.4        # build + push 8.4 + 8.4-grpc, multi-arch
 make print           # inspect resolved targets as JSON
 make smoke           # quick single-image build to validate setup
 ```
@@ -65,8 +100,8 @@ docker buildx bake --print                  # dry run
 |---|---|---|
 | `REGISTRY` | `puncoz` | Image registry |
 | `IMAGE_NAME` | `laravel-php` | Repository name |
-| `PHP_VERSIONS` | `["7.4", "8.0", "8.1", "8.2"]` | PHP majors to build |
-| `DEFAULT_PHP_VERSION` | `"8.2"` | PHP version that owns `:latest` |
+| `PHP_VERSIONS` | `["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]` | PHP branches to build |
+| `DEFAULT_PHP_VERSION` | `"8.4"` | PHP version that owns `:latest` |
 | `COMPOSER_VERSION` | `"2.10.1"` | Pinned Composer release |
 | `NVM_VERSION` | `"0.40.5"` | Pinned nvm release |
 | `DEFAULT_NODE_VERSION` | `"24"` | Node version pre-installed in the base |
@@ -87,7 +122,7 @@ The base image ships with Node 24 active. To use a different version inside your
 **Pin via `.nvmrc`** (recommended — keeps the version next to your code):
 
 ```dockerfile
-FROM puncoz/laravel-php:8.2
+FROM puncoz/laravel-php:8.4
 
 COPY .nvmrc ./
 RUN nvm-use
@@ -110,7 +145,7 @@ See [`example/`](./example) for a full production-ready setup: multi-stage Docke
 Minimal sketch:
 
 ```dockerfile
-FROM puncoz/laravel-php:8.2 AS app
+FROM puncoz/laravel-php:8.4 AS app
 WORKDIR /var/www/html
 
 COPY .nvmrc ./

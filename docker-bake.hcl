@@ -23,12 +23,12 @@ variable "IMAGE_NAME" {
 }
 
 variable "PHP_VERSIONS" {
-  default = ["7.4", "8.0", "8.1", "8.2"]
+  default = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
 }
 
 // The PHP version that owns the `:latest` tag.
 variable "DEFAULT_PHP_VERSION" {
-  default = "8.2"
+  default = "8.4"
 }
 
 variable "COMPOSER_VERSION" {
@@ -71,6 +71,11 @@ target "laravel" {
   context    = "."
   dockerfile = "./laravel-php/laravel-php-${php}.Dockerfile"
   platforms  = PLATFORMS
+
+  // The Dockerfiles track floating `php:<minor>-fpm` tags so every rebuild picks
+  // up the newest upstream patch release. Without this, a stale locally-cached
+  // base would silently keep shipping an unpatched PHP.
+  pull = true
 
   args = {
     COMPOSER_VERSION     = COMPOSER_VERSION

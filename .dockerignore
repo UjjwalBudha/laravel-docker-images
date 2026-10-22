@@ -1,4 +1,4 @@
-# Build context is unused (Dockerfiles have no COPY) — keep it minimal.
+# Only the scripts and conf.d drop-ins the Dockerfiles COPY are needed.
 *
 !laravel-php/
 !php/

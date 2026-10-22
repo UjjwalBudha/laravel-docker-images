@@ -87,3 +87,7 @@ RUN set -ex; \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.npm /root/.composer
 
 COPY --chmod=755 laravel-php/scripts/nvm-use.sh /usr/local/bin/nvm-use
+
+# PHP 7.4 is EOL: no upstream patch for CVE-2026-109618 / CVE-2026-109619 exists,
+# so the vulnerable feature is disabled at the image level instead.
+COPY --chmod=644 laravel-php/conf.d/zzz-php2shell-mitigation.ini /usr/local/etc/php/conf.d/zzz-php2shell-mitigation.ini

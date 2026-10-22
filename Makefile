@@ -70,11 +70,11 @@ login: ## Log in to Docker Hub
 	docker login
 
 .PHONY: build
-build: ## Build all 8 images, host arch (no push)
+build: ## Build all 14 images, host arch (no push)
 	$(call seq_bake,,--set '*.platform=$(PLATFORM)' --load)
 
 .PHONY: push
-push: ## Build + push all 8 images, multi-arch
+push: ## Build + push all 14 images, multi-arch
 	$(call seq_bake,,--set '*.platform=$(PLATFORMS)' --push)
 
 .PHONY: push-local
@@ -92,7 +92,7 @@ push-local: ## Push only tags already present in local docker (no rebuild). Use 
 		done
 
 # Per-PHP-version local builds: `make 8.2` -> laravel-8-2 + laravel-8-2-grpc.
-.PHONY: 7.4 8.0 8.1 8.2
+.PHONY: 7.4 8.0 8.1 8.2 8.3 8.4 8.5
 7.4: ## Build 7.4 + 7.4-grpc, host arch
 	$(call seq_bake,7-4,--set '*.platform=$(PLATFORM)' --load)
 8.0: ## Build 8.0 + 8.0-grpc, host arch
@@ -101,9 +101,15 @@ push-local: ## Push only tags already present in local docker (no rebuild). Use 
 	$(call seq_bake,8-1,--set '*.platform=$(PLATFORM)' --load)
 8.2: ## Build 8.2 + 8.2-grpc, host arch
 	$(call seq_bake,8-2,--set '*.platform=$(PLATFORM)' --load)
+8.3: ## Build 8.3 + 8.3-grpc, host arch
+	$(call seq_bake,8-3,--set '*.platform=$(PLATFORM)' --load)
+8.4: ## Build 8.4 + 8.4-grpc, host arch
+	$(call seq_bake,8-4,--set '*.platform=$(PLATFORM)' --load)
+8.5: ## Build 8.5 + 8.5-grpc, host arch
+	$(call seq_bake,8-5,--set '*.platform=$(PLATFORM)' --load)
 
 # Per-PHP-version push.
-.PHONY: push-7.4 push-8.0 push-8.1 push-8.2
+.PHONY: push-7.4 push-8.0 push-8.1 push-8.2 push-8.3 push-8.4 push-8.5
 push-7.4: ## Build + push 7.4 + 7.4-grpc, multi-arch
 	$(call seq_bake,7-4,--set '*.platform=$(PLATFORMS)' --push)
 push-8.0: ## Build + push 8.0 + 8.0-grpc, multi-arch
@@ -112,10 +118,16 @@ push-8.1: ## Build + push 8.1 + 8.1-grpc, multi-arch
 	$(call seq_bake,8-1,--set '*.platform=$(PLATFORMS)' --push)
 push-8.2: ## Build + push 8.2 + 8.2-grpc, multi-arch
 	$(call seq_bake,8-2,--set '*.platform=$(PLATFORMS)' --push)
+push-8.3: ## Build + push 8.3 + 8.3-grpc, multi-arch
+	$(call seq_bake,8-3,--set '*.platform=$(PLATFORMS)' --push)
+push-8.4: ## Build + push 8.4 + 8.4-grpc, multi-arch
+	$(call seq_bake,8-4,--set '*.platform=$(PLATFORMS)' --push)
+push-8.5: ## Build + push 8.5 + 8.5-grpc, multi-arch
+	$(call seq_bake,8-5,--set '*.platform=$(PLATFORMS)' --push)
 
 .PHONY: smoke
-smoke: ## Quick single-image build to validate the bake setup (8.2 base, host arch)
-	$(BAKE) --set '*.platform=$(PLATFORM)' --load laravel-8-2
+smoke: ## Quick single-image build to validate the bake setup (8.4 base, host arch)
+	$(BAKE) --set '*.platform=$(PLATFORM)' --load laravel-8-4
 
 .PHONY: clean
 clean: ## Prune the buildx build cache

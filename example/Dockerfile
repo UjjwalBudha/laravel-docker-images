@@ -15,9 +15,9 @@
 # explicit `RUN nvm-use 20`. If 22 is fine, drop the `nvm-use` lines entirely.
 #
 # Build:
-#   docker build --build-arg PHP_VERSION=8.2 -t my-laravel-app .
+#   docker build --build-arg PHP_VERSION=8.4 -t my-laravel-app .
 
-ARG PHP_VERSION=8.2
+ARG PHP_VERSION=8.4
 
 # -------- Stage 1: PHP dependencies --------
 FROM puncoz/laravel-php:${PHP_VERSION} AS vendor
