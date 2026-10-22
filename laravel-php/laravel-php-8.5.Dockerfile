@@ -27,6 +27,11 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
 # One build layer keeps the toolchain (g++/make/autoconf) out of the final
 # image. nvm.sh is not `set -u`-safe (it reads $_, which dash leaves unset),
 # so we use `set -ex` without -u.
+#
+# `opcache` is absent from the extension list on purpose: as of 8.5 upstream
+# links it statically, so docker-php-ext-install produces no module and the
+# install step fails on `modules/*`. It is already loaded — verify with
+# `php -r 'var_dump(extension_loaded("Zend OPcache"));'`.
 RUN set -ex; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -46,7 +51,6 @@ RUN set -ex; \
         gd \
         gmp \
         intl \
-        opcache \
         pcntl \
         pdo_mysql \
         pdo_pgsql \
