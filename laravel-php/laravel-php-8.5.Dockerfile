@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM php:8.5-fpm
 
 LABEL maintainer="Puncoz Nepal <https://github.com/puncoz>"
@@ -25,14 +26,21 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo $TZ > /etc/timezone
 
 # One build layer keeps the toolchain (g++/make/autoconf) out of the final
-# image. nvm.sh is not `set -u`-safe (it reads $_, which dash leaves unset),
-# so we use `set -ex` without -u.
+# image — splitting it would strand those packages in a lower layer, where
+# purging them reclaims nothing. The apt cache mounts are what make the
+# base/-grpc pair cheap instead: both download the archives only once.
+# nvm.sh is not `set -u`-safe (it reads $_, which dash leaves unset), so we
+# use `set -ex` without -u.
 #
 # `opcache` is absent from the extension list on purpose: as of 8.5 upstream
 # links it statically, so docker-php-ext-install produces no module and the
 # install step fails on `modules/*`. It is already loaded — verify with
 # `php -r 'var_dump(extension_loaded("Zend OPcache"));'`.
-RUN set -ex; \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    set -ex; \
+    rm -f /etc/apt/apt.conf.d/docker-clean; \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git xz-utils \
@@ -87,7 +95,6 @@ RUN set -ex; \
     git config --global --add safe.directory '*'; \
     pecl clear-cache; \
     apt-get purge -y --auto-remove autoconf g++ make pkg-config; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /root/.npm /root/.composer
+    rm -rf /tmp/* /var/tmp/* /root/.npm /root/.composer
 
 COPY --chmod=755 laravel-php/scripts/nvm-use.sh /usr/local/bin/nvm-use
