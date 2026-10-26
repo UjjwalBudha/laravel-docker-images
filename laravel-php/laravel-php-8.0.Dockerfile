@@ -1,4 +1,65 @@
 # syntax=docker/dockerfile:1
+
+# Declared before the first FROM so the `FROM grpc-${INSTALL_GRPC}` alias
+# further down can resolve them.
+ARG INSTALL_GRPC=false
+ARG GRPC_VERSION=1.84.0
+
+# ---------------------------------------------------------------------------
+# grpc.so, built on its own.
+#
+# grpc vendors boringssl, abseil, upb and re2 — roughly 3000 C++ translation
+# units, ~15 min on eight native cores and several times that under QEMU.
+# Isolating it buys two things: the compile is now keyed only on the PHP base
+# image and GRPC_VERSION, so edits to the apt/node/composer layer below no
+# longer rebuild it, and the base and -grpc variants share that layer
+# byte-for-byte instead of each building it from scratch.
+#
+# The tarball is unpacked to a fixed path rather than left to pecl, which
+# builds under /tmp/pear/temp/pear-build-<random>. ccache hashes the compiler
+# command line, and the -I flags pecl derives from that random path differ on
+# every run, so the cache would miss every time.
+# ---------------------------------------------------------------------------
+FROM php:8.0-fpm AS grpc-true
+
+ARG GRPC_VERSION
+
+# ccache is shared across every PHP version: the bulk of these objects are
+# vendored C++ that never includes a PHP header, so they are identical
+# regardless of which base built them. `sharing=shared` because ccache
+# serialises its own writes and concurrent readers are the normal case.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/ccache,id=grpc-ccache,sharing=shared \
+    set -ex; \
+    rm -f /etc/apt/apt.conf.d/docker-clean; \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        autoconf ccache g++ make pkg-config zlib1g-dev; \
+    mkdir -p /usr/src/grpc; \
+    curl -fsSL "https://pecl.php.net/get/grpc-${GRPC_VERSION}.tgz" \
+        | tar -xz -C /usr/src/grpc --strip-components=1; \
+    cd /usr/src/grpc; \
+    export CCACHE_DIR=/ccache CCACHE_MAXSIZE=5G; \
+    export CC="ccache cc" CXX="ccache c++"; \
+    phpize; \
+    ./configure --enable-grpc; \
+    make -j"$(nproc)"; \
+    ccache --show-stats; \
+    mkdir -p /grpc-out; \
+    cp modules/grpc.so /grpc-out/grpc.so; \
+    strip --strip-debug /grpc-out/grpc.so
+
+# The no-grpc arm of the alias. Same base as the final stage, so it adds one
+# empty layer and no extra pull.
+FROM php:8.0-fpm AS grpc-false
+RUN mkdir -p /grpc-out
+
+# Resolves to grpc-true or grpc-false. BuildKit only builds the stage this
+# actually selects, so the base image never pays for the compile above.
+FROM grpc-${INSTALL_GRPC} AS grpc-artifact
+
 FROM php:8.0-fpm
 
 LABEL maintainer="Puncoz Nepal <https://github.com/puncoz>"
@@ -6,10 +67,9 @@ LABEL maintainer="Puncoz Nepal <https://github.com/puncoz>"
 ARG COMPOSER_VERSION=2.10.1
 ARG NVM_VERSION=0.40.5
 ARG DEFAULT_NODE_VERSION=24
-ARG INSTALL_GRPC=false
 # Space-separated list of extra extensions to install via docker-php-ext-install.
 # Only works for extensions whose runtime libs are already present in this image
-# (e.g. `mysqli`, `calendar`, `sockets`). For extensions needing extra apt deps,
+# (e.g. `mysqli`, `calendar`, `ldap`). For extensions needing extra apt deps,
 # install them in your own downstream Dockerfile.
 ARG PHP_EXTENSIONS=""
 
@@ -27,8 +87,8 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
 
 # One build layer keeps the toolchain (g++/make/autoconf) out of the final
 # image — splitting it would strand those packages in a lower layer, where
-# purging them reclaims nothing. The apt cache mounts are what make the
-# base/-grpc pair cheap instead: both download the archives only once.
+# purging them reclaims nothing. This layer is now identical for the base and
+# -grpc variants, so the second of the pair is a straight cache hit.
 # nvm.sh is not `set -u`-safe (it reads $_, which dash leaves unset), so we
 # use `set -ex` without -u.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -37,10 +97,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean; \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache; \
     apt-get update; \
+    apt-get upgrade -y; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git xz-utils \
         supervisor unzip zip \
-        default-mysql-client postgresql-client sqlite3 \
+        postgresql-client sqlite3 \
         libgmp-dev libicu-dev libsodium-dev libsqlite3-dev \
         libpq-dev libzip-dev \
         libfreetype6-dev libjpeg62-turbo-dev libpng-dev \
@@ -59,6 +120,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         pdo_mysql \
         pdo_pgsql \
         pdo_sqlite \
+        pgsql \
+        sockets \
         sodium \
         zip; \
     if [ -n "$PHP_EXTENSIONS" ]; then \
@@ -67,11 +130,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     MAKEFLAGS="-j$(nproc)" pecl install redis; \
     docker-php-ext-enable redis; \
     strip --strip-debug /usr/local/lib/php/extensions/*/redis.so; \
-    if [ "$INSTALL_GRPC" = "true" ]; then \
-        MAKEFLAGS="-j$(nproc)" pecl install grpc; \
-        docker-php-ext-enable grpc; \
-        strip --strip-debug /usr/local/lib/php/extensions/*/grpc.so; \
-    fi; \
     curl -sS https://getcomposer.org/installer | php -- \
         --install-dir=/usr/local/bin --filename=composer --version="${COMPOSER_VERSION}"; \
     mkdir -p "$NVM_DIR"; \
@@ -92,6 +150,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     pecl clear-cache; \
     apt-get purge -y --auto-remove autoconf g++ make pkg-config; \
     rm -rf /tmp/* /var/tmp/* /root/.npm /root/.composer
+
+# grpc.so from the stage at the top of this file. /grpc-out is empty when
+# INSTALL_GRPC=false, so the conditional covers both variants with one COPY.
+COPY --from=grpc-artifact /grpc-out/ /tmp/grpc-out/
+RUN set -ex; \
+    if [ -f /tmp/grpc-out/grpc.so ]; then \
+        mv /tmp/grpc-out/grpc.so "$(php -r 'echo ini_get("extension_dir");')/grpc.so"; \
+        docker-php-ext-enable grpc; \
+    fi; \
+    rm -rf /tmp/grpc-out
 
 COPY --chmod=755 laravel-php/scripts/nvm-use.sh /usr/local/bin/nvm-use
 

@@ -6,13 +6,13 @@ These images install **binaries and runtimes only** — `php.ini`, OPcache tunin
 
 ## What's included
 
-- PHP-FPM with `bcmath`, `exif`, `gd`, `gmp`, `intl`, `opcache`, `pcntl`, `pdo_mysql`, `pdo_pgsql`, `pdo_sqlite`, `sodium`, `zip`, plus PECL `redis`
-- Optional PECL `grpc` (`-grpc` tag variants)
-- Optional extra PHP extensions via `PHP_EXTENSIONS` build arg (e.g. `--build-arg PHP_EXTENSIONS="mysqli sockets calendar"`)
+- PHP-FPM with `bcmath`, `exif`, `gd`, `gmp`, `intl`, `opcache`, `pcntl`, `pdo_mysql`, `pdo_pgsql`, `pdo_sqlite`, `pgsql`, `sockets`, `sodium`, `zip`, plus PECL `redis`
+- Optional PECL `grpc` (`-grpc` tag variants), pinned via `GRPC_VERSION` and compiled in a separate cached stage
+- Optional extra PHP extensions via `PHP_EXTENSIONS` build arg (e.g. `--build-arg PHP_EXTENSIONS="mysqli calendar ldap"`)
 - Composer (pinned via `COMPOSER_VERSION`)
 - **nvm** + Node 24 (default) at `/usr/local/nvm`; `node`/`npm`/`npx`/`yarn`/`pnpm`/`corepack` symlinked into `/usr/local/bin`
 - `nvm-use` helper script — install + activate a different Node version in one line
-- DB clients: `default-mysql-client`, `postgresql-client`, `sqlite3`
+- DB clients: `postgresql-client`, `sqlite3` — see [Security](#security) for why there is no MySQL/MariaDB client
 - Git (with `safe.directory '*'` set for root), Supervisor, `zip`/`unzip`, `xz-utils`, `ca-certificates`
 
 ## Tag matrix
@@ -54,6 +54,32 @@ endpoint under default configuration. Upstream patched it on 2026-10-21 in PHP
   re-enabled by accident. This is a mitigation, not a patch — **migrate off EOL
   PHP.**
 
+### Debian base-image CVEs
+
+The build runs `apt-get upgrade` before installing anything, so each rebuild
+also pulls whatever Debian security updates have landed since the `php:<minor>-fpm`
+base was cut. Two things that does *not* fix are worth knowing about:
+
+**No MySQL/MariaDB client is installed.** `default-mysql-client` pulls in
+`mariadb-client`, built from the `mariadb` source package, which as of
+2026-10-26 is stuck at `11.8.6-0+deb13u1` in trixie against a long list of
+open CVEs — including two rated CRITICAL that upstream only fixes in 11.8.9.
+Debian has no fixed build, and `trixie-proposed-updates` only reaches 11.8.8.
+Nearly all of those CVEs are in the mariadb *server* (wsrep SST, the FRM
+parser, the CONNECT engine, `GRANT PROXY`) and are unreachable from a
+client-only install, but image scanners match on the source package, so they
+are reported regardless. Dropping the package removes both CRITICALs and ten
+HIGHs from the scan. If a downstream image genuinely needs `mariadb-dump`,
+install it there, where the tradeoff is visible.
+
+**Some findings have no fix available anywhere yet.** `glibc`, `libxml2`,
+`zlib1g` and `cyrus-sasl2` ship in `php:<minor>-fpm` itself, and for each of
+them Debian's candidate version is currently identical to the installed one —
+`apt-get upgrade` is a no-op. None can be removed either: `libxml2` and
+`zlib1g` are PHP core dependencies, and `libsasl2-2` arrives via
+`libldap2` ← `libcurl`. These clear themselves on the next rebuild after
+Debian publishes updates; until then they are expected scan output.
+
 Verify an image before deploying it:
 
 ```shell
@@ -63,11 +89,22 @@ docker run --rm puncoz/laravel-php:8.1 php -i | grep session.upload_progress.ena
 
 ## Setup
 
-Create the multi-platform builder once:
+Create the builder once:
 
 ```shell
-docker buildx create --use --platform=linux/amd64,linux/arm64 --name multi-platform-builder
+docker buildx create --use --platform=linux/amd64 --name multi-platform-builder
 docker buildx inspect --bootstrap
+```
+
+Images are built for `linux/amd64` only. Adding `linux/arm64` without a native
+arm64 builder node makes bake cross-build it under QEMU, and the grpc stage —
+~3000 vendored C++ translation units — goes from roughly 13 minutes to the
+better part of an hour. If you need arm64, attach a native node first:
+
+```shell
+docker buildx create --append --name multi-platform-builder \
+    --platform linux/arm64 ssh://user@some-graviton-host
+PLATFORMS='["linux/amd64","linux/arm64"]' make push
 ```
 
 ## Build
@@ -75,11 +112,11 @@ docker buildx inspect --bootstrap
 All builds are driven by `docker-bake.hcl` at the repo root. A `Makefile` wraps the common commands — run `make help` to see them all.
 
 ```shell
-make builder         # one-time: create the multi-platform buildx builder
+make builder         # one-time: create the buildx builder
 make build           # build all 14 images locally for host arch
-make push            # build + push all 14 images, multi-arch
+make push            # build + push all 14 images
 make 8.4             # build 8.4 + 8.4-grpc locally
-make push-8.4        # build + push 8.4 + 8.4-grpc, multi-arch
+make push-8.4        # build + push 8.4 + 8.4-grpc
 make print           # inspect resolved targets as JSON
 make smoke           # quick single-image build to validate setup
 ```
@@ -104,15 +141,16 @@ docker buildx bake --print                  # dry run
 | `DEFAULT_PHP_VERSION` | `"8.4"` | PHP version that owns `:latest` |
 | `COMPOSER_VERSION` | `"2.10.1"` | Pinned Composer release |
 | `NVM_VERSION` | `"0.40.5"` | Pinned nvm release |
+| `GRPC_VERSION` | `"1.84.0"` | Pinned PECL grpc release (cache key for the grpc build stage) |
 | `DEFAULT_NODE_VERSION` | `"24"` | Node version pre-installed in the base |
 | `PHP_EXTENSIONS` | `""` | Extra extensions to install via `docker-php-ext-install` (space-separated) |
-| `PLATFORMS` | `["linux/amd64", "linux/arm64"]` | Target arches |
+| `PLATFORMS` | `["linux/amd64"]` | Target arches — see [Setup](#setup) before adding arm64 |
 
 Override per-invocation, e.g. to downgrade the baked default to Node 20 or to bundle extra extensions:
 
 ```shell
 DEFAULT_NODE_VERSION=20 docker buildx bake --push
-PHP_EXTENSIONS="mysqli sockets calendar" docker buildx bake --push
+PHP_EXTENSIONS="mysqli calendar ldap" docker buildx bake --push
 ```
 
 ## Switching Node versions

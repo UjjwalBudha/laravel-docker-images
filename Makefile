@@ -16,7 +16,7 @@ CONCURRENT ?= 0
 
 # Host-arch single platform — required for `--load` (multi-arch can't load).
 PLATFORM   ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-PLATFORMS  ?= linux/amd64,linux/arm64
+PLATFORMS  ?= linux/amd64
 
 BAKE := REGISTRY=$(REGISTRY) IMAGE_NAME=$(IMAGE_NAME) docker buildx bake
 

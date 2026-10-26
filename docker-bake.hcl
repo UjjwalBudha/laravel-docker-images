@@ -39,6 +39,13 @@ variable "NVM_VERSION" {
   default = "0.40.5"
 }
 
+// Pinned so the grpc build stage has a stable cache key. Unpinned, `pecl
+// install grpc` silently follows the latest release and rebuilds for ~15 min
+// whenever upstream publishes one.
+variable "GRPC_VERSION" {
+  default = "1.84.0"
+}
+
 // Node version pre-installed via nvm and aliased as `default`. Projects can
 // switch with `nvm-use <other>` in their own Dockerfile.
 variable "DEFAULT_NODE_VERSION" {
@@ -52,8 +59,12 @@ variable "PHP_EXTENSIONS" {
   default = ""
 }
 
+// amd64 only. arm64 has no native builder here, so bake would cross-build it
+// under QEMU — which turns the grpc compile (~3000 vendored C++ units) from
+// roughly 15 minutes into the better part of an hour. Add "linux/arm64" back
+// only alongside a native arm64 builder node.
 variable "PLATFORMS" {
-  default = ["linux/amd64", "linux/arm64"]
+  default = ["linux/amd64"]
 }
 
 group "default" {
@@ -82,6 +93,7 @@ target "laravel" {
     NVM_VERSION          = NVM_VERSION
     DEFAULT_NODE_VERSION = DEFAULT_NODE_VERSION
     INSTALL_GRPC         = grpc
+    GRPC_VERSION         = GRPC_VERSION
     PHP_EXTENSIONS       = PHP_EXTENSIONS
   }
 
